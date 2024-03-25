@@ -472,8 +472,8 @@ class PdosWorkChain(ProtocolMixin, WorkChain):
         dos_parameters = self.inputs.dos.parameters.get_dict()
 
         if dos_parameters.pop('align_to_fermi', False):
-            dos_parameters['DOS']['Emin'] = dos_parameters['Emin'] + self.ctx.nscf_fermi
-            dos_parameters['DOS']['Emax'] = dos_parameters['Emax'] + self.ctx.nscf_fermi
+            dos_parameters['DOS']['Emin'] = dos_parameters['DOS']['Emin'] + self.ctx.nscf_fermi
+            dos_parameters['DOS']['Emax'] = dos_parameters['DOS']['Emax'] + self.ctx.nscf_fermi
 
         dos_inputs.parameters = orm.Dict(dos_parameters)
         dos_inputs['metadata']['call_link_label'] = 'dos'
