@@ -2,7 +2,7 @@
 """`CalcJob` implementation for the projwfc.x code of Quantum ESPRESSO."""
 from pathlib import Path
 
-from aiida.orm import Dict, FolderData, RemoteData, XyData, List
+from aiida.orm import Dict, FolderData, RemoteData, XyData
 
 from aiida_quantumespresso.calculations.namelists import NamelistsCalculation
 
@@ -51,7 +51,7 @@ class ProjwfcCalculation(NamelistsCalculation):
         spec.output('output_parameters', valid_type=Dict)
         spec.output('Dos', valid_type=XyData, help='Total DoS')
         # if tdosinboxes
-        spec.output('Ldos', valid_type=List, required=False, help='List of XyData nodes for each ldos box')
+        spec.output('Ldos', valid_type=XyData, required=False, help='LDoS for each box in same XyData node')
         # if not tdosinboxes
         spec.output('Pdos', valid_type=XyData, required=False, help='Total Projected DoS')
         ## if spin

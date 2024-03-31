@@ -3,7 +3,7 @@ import fnmatch
 from pathlib import Path
 import re
 
-from aiida.orm import BandsData, Dict, ProjectionData, XyData, List
+from aiida.orm import BandsData, Dict, ProjectionData, XyData
 from aiida.plugins import OrbitalFactory
 import numpy as np
 
@@ -367,12 +367,17 @@ class ProjwfcParser(BaseParser):
                     ldos = ldos_boxes_array[:, 3:]
             except (OSError, KeyError):
                 return self.exit(self.exit_codes.ERROR_READING_LDOSBOXES_FILE, logs)
-            Ldos_out = List()
+
+            Ldos_out = XyData()
+            Ldos_out.set_x(energy, 'Energy', 'eV')
+            ys = []
+            labels = []
+            units = []
             for i in range(n_boxes):
-                Ldos = XyData()
-                Ldos.set_x(energy, 'Energy', 'eV')
-                Ldos.set_y(ldos[:,3+i], 'LDoS', 'states/eV')
-                Ldos_out.append(Ldos)
+                ys.append(ldos[:,i])
+                labels.append(f'LDoS box {i+1}')
+                units.append('states/eV')
+            Ldos_out.set_y(ys, labels, units)
             self.out('Ldos', Ldos_out)
 
         Dos_out = XyData()
