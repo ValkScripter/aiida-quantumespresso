@@ -3,7 +3,7 @@ import fnmatch
 from pathlib import Path
 import re
 
-from aiida.orm import BandsData, Dict, ProjectionData, XyData
+from aiida.orm import BandsData, Dict, ProjectionData, XyData, List
 from aiida.plugins import OrbitalFactory
 import numpy as np
 
@@ -314,39 +314,70 @@ class ProjwfcParser(BaseParser):
         out_info_dict['spinorbit'] = parsed_xml.get('spin_orbit_calculation')
         out_info_dict['spin'] = out_info_dict['nspin'] == 2
 
-        # check and read pdos_tot file
+
         out_filenames = self.retrieved.base.repository.list_object_names()
-        try:
-            pdostot_filename = fnmatch.filter(out_filenames, '*pdos_tot*')[0]
-            with self.retrieved.base.repository.open(pdostot_filename, 'r') as pdostot_file:
-                # Columns: Energy(eV), Ldos, Pdos
-                pdostot_array = np.atleast_2d(np.genfromtxt(pdostot_file))
-                energy = pdostot_array[:, 0]
-                dos = pdostot_array[:, 1]
-        except (OSError, KeyError):
-            return self.exit(self.exit_codes.ERROR_READING_PDOSTOT_FILE, logs)
+        pdostot_filenames = fnmatch.filter(out_filenames, '*pdos_tot*')
 
-        # check and read all of the individual pdos_atm files
-        pdos_atm_filenames = fnmatch.filter(out_filenames, '*pdos_atm*')
-        pdos_atm_array_dict = {}
-        for name in pdos_atm_filenames:
-            with self.retrieved.base.repository.open(name, 'r') as pdosatm_file:
-                pdos_atm_array_dict[name] = np.atleast_2d(np.genfromtxt(pdosatm_file))
+        if len(pdostot_filenames)>0:    # when not tdosinboxes
+            # check and read pdos_tot file
+            try:
+                pdostot_filename = pdostot_filenames[0]
+                with self.retrieved.base.repository.open(pdostot_filename, 'r') as pdostot_file:
+                    # Columns: Energy(eV), Dos(E), Pdos(E)
+                    pdostot_array = np.atleast_2d(np.genfromtxt(pdostot_file))
+                    energy = pdostot_array[:, 0]
+                    dos = pdostot_array[:, 1]
+                    pdos = pdostot_array[:, 2]
+            except (OSError, KeyError):
+                return self.exit(self.exit_codes.ERROR_READING_PDOSTOT_FILE, logs)
 
-        # finding the bands and projections
-        out_info_dict['energy'] = energy
-        out_info_dict['pdos_atm_array_dict'] = pdos_atm_array_dict
-        try:
-            new_nodes_list = self._parse_bands_and_projections(out_info_dict)
-        except QEOutputParsingError as err:
-            self.logger.error(f'Error parsing bands and projections: {err}')
-            return self.exit(self.exit_codes.ERROR_PARSING_PROJECTIONS, logs)
-        for linkname, node in new_nodes_list:
-            self.out(linkname, node)
+            # check and read all of the individual pdos_atm files
+            pdos_atm_filenames = fnmatch.filter(out_filenames, '*pdos_atm*')
+            pdos_atm_array_dict = {}
+            for name in pdos_atm_filenames:
+                with self.retrieved.base.repository.open(name, 'r') as pdosatm_file:
+                    pdos_atm_array_dict[name] = np.atleast_2d(np.genfromtxt(pdosatm_file))
+
+            # finding the bands and projections
+            out_info_dict['energy'] = energy
+            out_info_dict['pdos_atm_array_dict'] = pdos_atm_array_dict
+            try:
+                new_nodes_list = self._parse_bands_and_projections(out_info_dict)
+            except QEOutputParsingError as err:
+                self.logger.error(f'Error parsing bands and projections: {err}')
+                return self.exit(self.exit_codes.ERROR_PARSING_PROJECTIONS, logs)
+            for linkname, node in new_nodes_list:
+                self.out(linkname, node)
+
+            Pdos_out = XyData()
+            Pdos_out.set_x(energy, 'Energy', 'eV')
+            Pdos_out.set_y(pdos, 'PDoS', 'states/eV')
+            self.out('Pdos', Pdos_out)
+
+        else:       # when tdosinboxes
+            # check and read ldos_boxes file
+            try:
+                ldos_boxes_filename = fnmatch.filter(out_filenames, '*ldos_boxes*')[0]
+                with self.retrieved.base.repository.open(ldos_boxes_filename, 'r') as ldos_boxes_file:
+                    # Columns: E (eV)  tot(E)     totldos    #  1 (E)   #  2 (E)  ...   #  {n_proj_boxes} (E)
+                    ldos_boxes_array = np.atleast_2d(np.genfromtxt(ldos_boxes_file))
+                    n_boxes = ldos_boxes_array.shape[1]-3
+                    energy = ldos_boxes_array[:, 0]
+                    dos = ldos_boxes_array[:, 1]
+                    ldos = ldos_boxes_array[:, 3:]
+            except (OSError, KeyError):
+                return self.exit(self.exit_codes.ERROR_READING_LDOSBOXES_FILE, logs)
+            Ldos_out = List()
+            for i in range(n_boxes):
+                Ldos = XyData()
+                Ldos.set_x(energy, 'Energy', 'eV')
+                Ldos.set_y(ldos[:,3+i], 'LDoS', 'states/eV')
+                Ldos_out.append(Ldos)
+            self.out('Ldos', Ldos_out)
 
         Dos_out = XyData()
         Dos_out.set_x(energy, 'Energy', 'eV')
-        Dos_out.set_y(dos, 'Dos', 'states/eV')
+        Dos_out.set_y(dos, 'DoS', 'states/eV')
         self.out('Dos', Dos_out)
 
         return self.exit(logs=logs)
