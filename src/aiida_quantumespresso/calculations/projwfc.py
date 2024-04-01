@@ -25,7 +25,7 @@ class ProjwfcCalculation(NamelistsCalculation):
         ('PROJWFC', 'lbinary_data', False),
         ('PROJWFC', 'kresolveddos', False),
         # ('PROJWFC', 'tdosinboxes', False),
-        ('PROJWFC', 'plotboxes', False),
+        # ('PROJWFC', 'plotboxes', False),
     ]
     _default_parser = 'quantumespresso.projwfc'
 
