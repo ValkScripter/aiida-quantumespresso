@@ -3,7 +3,7 @@ import fnmatch
 from pathlib import Path
 import re
 
-from aiida.orm import BandsData, Dict, ProjectionData, XyData
+from aiida.orm import ArrayData, BandsData, Dict, ProjectionData, XyData
 from aiida.plugins import OrbitalFactory
 import numpy as np
 
@@ -236,6 +236,7 @@ def spin_dependent_pdos_subparser(out_info_dict):
     spinorbit = out_info_dict.get('spinorbit', False)
     spin_down = out_info_dict['spin_down']
     pdos_atm_array_dict = out_info_dict['pdos_atm_array_dict']
+    kresolveddos = out_info_dict.get('kresolveddos', False)         # Added
     if spin:
         mult_factor = 2
         if spin_down:
@@ -247,6 +248,7 @@ def spin_dependent_pdos_subparser(out_info_dict):
         first_array = 2
     mf = mult_factor
     fa = first_array
+    offset = 1 if kresolveddos else 0           # Added
     pdos_file_names = [k for k in pdos_atm_array_dict]
     pdos_file_names.sort(key=natural_sort_key)
     out_arrays = []
@@ -257,12 +259,12 @@ def spin_dependent_pdos_subparser(out_info_dict):
         if not collinear and not spinorbit:
             # In the non-collinear, non-spinorbit case, the "up"-spin orbitals
             # come first, followed by all "down" orbitals
-            for i in range(3, np.shape(this_array)[1], 2):
+            for i in range(3+offset, np.shape(this_array)[1], 2):           # Modified
                 out_arrays.append(this_array[:, i])
-            for i in range(4, np.shape(this_array)[1], 2):
+            for i in range(4+offset, np.shape(this_array)[1], 2):           # Modified
                 out_arrays.append(this_array[:, i])
         else:
-            for i in range(fa, np.shape(this_array)[1], mf):
+            for i in range(fa+offset, np.shape(this_array)[1], mf):         # Modified
                 out_arrays.append(this_array[:, i])
 
     return out_arrays
@@ -318,6 +320,8 @@ class ProjwfcParser(BaseParser):
         out_filenames = self.retrieved.base.repository.list_object_names()
         pdostot_filenames = fnmatch.filter(out_filenames, '*pdos_tot*')
 
+        is_kpdos = False
+
         if len(pdostot_filenames)>0:    # when not tdosinboxes
             # check and read pdos_tot file
             try:
@@ -325,9 +329,13 @@ class ProjwfcParser(BaseParser):
                 with self.retrieved.base.repository.open(pdostot_filename, 'r') as pdostot_file:
                     # Columns: Energy(eV), Dos(E), Pdos(E)
                     pdostot_array = np.atleast_2d(np.genfromtxt(pdostot_file))
-                    energy = pdostot_array[:, 0]
-                    dos = pdostot_array[:, 1]
-                    pdos = pdostot_array[:, 2]
+                    is_kpdos = pdostot_array.shape[1]>3
+                    out_info_dict['kresolveddos'] = is_kpdos
+                    if is_kpdos:
+                        kpoints = pdostot_array[:, 0]
+                    energy = pdostot_array[:, -3]
+                    dos = pdostot_array[:, -2]
+                    pdos = pdostot_array[:, -1]
             except (OSError, KeyError):
                 return self.exit(self.exit_codes.ERROR_READING_PDOSTOT_FILE, logs)
 
@@ -339,6 +347,9 @@ class ProjwfcParser(BaseParser):
                     pdos_atm_array_dict[name] = np.atleast_2d(np.genfromtxt(pdosatm_file))
 
             # finding the bands and projections
+            if is_kpdos:
+                out_info_dict['kpoints'] = kpoints
+                self.out('kpoints_mesh', ArrayData(kpoints))
             out_info_dict['energy'] = energy
             out_info_dict['pdos_atm_array_dict'] = pdos_atm_array_dict
             try:
