@@ -1,17 +1,19 @@
+import os
+
+from aiida import orm
 from aiida.engine import ExitCode
 from aiida.orm import SinglefileData
 from aiida.parsers.parser import Parser
 from aiida.plugins import CalculationFactory
+from ase.units import Bohr, Ry
 import numpy as np
-from aiida_quantumespresso.utils.mapping import get_logging_container
-from aiida import orm
-from ase.units import Ry, Bohr
+
 from aiida_quantumespresso.calculations.average import AverageCalculation
-import os
+from aiida_quantumespresso.utils.mapping import get_logging_container
 
 from .base import BaseParser
 
-AverageCalculation = CalculationFactory('average')
+AverageCalculation = CalculationFactory("average")
 
 
 class AverageParser(BaseParser):
@@ -27,20 +29,31 @@ class AverageParser(BaseParser):
         if base_exit_code:
             return self.exit(base_exit_code, logs)
 
-        self.out('output_parameters', orm.Dict(parsed_data))
+        self.out("output_parameters", orm.Dict(parsed_data))
 
         try:
-            retrieved_temporary_folder = kwargs['retrieved_temporary_folder']
+            retrieved_temporary_folder = kwargs["retrieved_temporary_folder"]
         except KeyError:
             return self.exit(self.exit_codes.ERROR_NO_RETRIEVED_TEMPORARY_FOLDER)
 
         try:
-            with open(os.path.join(retrieved_temporary_folder, AverageCalculation._DEFAULT_OUTPUT_DATA_FILE), 'r') as file_handler:
-                self.out('output_data', self.parse_data(file_handler))
+            with open(
+                os.path.join(
+                    retrieved_temporary_folder,
+                    AverageCalculation._DEFAULT_OUTPUT_DATA_FILE,
+                ),
+                "r",
+            ) as file_handler:
+                self.out("output_data", self.parse_data(file_handler))
         except OSError:
-            return self.exit_codes.ERROR_OUTPUT_DATAFILE_READ.format(filename=AverageCalculation._DEFAULT_OUTPUT_DATA_FILE)
+            return self.exit_codes.ERROR_OUTPUT_DATAFILE_READ.format(
+                filename=AverageCalculation._DEFAULT_OUTPUT_DATA_FILE
+            )
         except Exception as exception:  # pylint: disable=broad-except
-            return self.exit_codes.ERROR_OUTPUT_DATAFILE_PARSE.format(filename=AverageCalculation._DEFAULT_OUTPUT_DATA_FILE, exception=exception)
+            return self.exit_codes.ERROR_OUTPUT_DATAFILE_PARSE.format(
+                filename=AverageCalculation._DEFAULT_OUTPUT_DATA_FILE,
+                exception=exception,
+            )
 
     def parse_data(file_handler):
         """
