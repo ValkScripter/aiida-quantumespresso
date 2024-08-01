@@ -52,7 +52,7 @@ class AverageParser(BaseParser):
                 exception=exception,
             )
 
-    def parse_data(file_handler):
+    def parse_data(self, file_handler):
         """
         Parse the data file.
 
