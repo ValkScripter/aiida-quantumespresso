@@ -2,6 +2,7 @@ from aiida import orm
 from aiida.common import datastructures
 from aiida.engine import CalcJob
 from aiida.orm import SinglefileData
+from ase.units import Ry, Bohr
 
 
 class AverageCalculation(CalcJob):
@@ -69,10 +70,43 @@ class AverageCalculation(CalcJob):
 
         # Output ports
         spec.output(
-            "averages",
+            "output_parameters",
+            valid_type=orm.Dict,
+        )
+        spec.output(
+            "output_data",
             valid_type=orm.ArrayData,
             help="The output data containing columns: z Ang, p(z) eV, m(z) eV. code outputs are in Bohr and Rydberg. Conversion is done internally.",
         )
+
+        # Standard exceptions
+        spec.exit_code(301, 'ERROR_NO_RETRIEVED_TEMPORARY_FOLDER',
+            message='The retrieved temporary folder could not be accessed.')
+        spec.exit_code(302, 'ERROR_OUTPUT_STDOUT_MISSING',
+            message='The retrieved folder did not contain the required stdout output file.')
+        spec.exit_code(303, 'ERROR_OUTPUT_XML_MISSING',
+            message='The parent folder did not contain the required XML output file.')
+        spec.exit_code(310, 'ERROR_OUTPUT_STDOUT_READ',
+            message='The stdout output file could not be read.')
+        spec.exit_code(311, 'ERROR_OUTPUT_STDOUT_PARSE',
+            message='The stdout output file could not be parsed.')
+        spec.exit_code(312, 'ERROR_OUTPUT_STDOUT_INCOMPLETE',
+            message='The stdout output file was incomplete.')
+        spec.exit_code(340, 'ERROR_OUT_OF_WALLTIME_INTERRUPTED',
+            message='The calculation stopped prematurely because it ran out of walltime but the job was killed by the '
+                    'scheduler before the files were safely written to disk for a potential restart.')
+        spec.exit_code(350, 'ERROR_UNEXPECTED_PARSER_EXCEPTION',
+            message='The parser raised an unexpected exception: {exception}')
+
+        # Output datafile related exceptions
+        spec.exit_code(330, 'ERROR_OUTPUT_DATAFILE_MISSING',
+            message='The formatted data output file `{filename}` was not present in the retrieved (temporary) folder.')
+        spec.exit_code(331, 'ERROR_OUTPUT_DATAFILE_READ',
+            message='The formatted data output file `{filename}` could not be read.')
+        spec.exit_code(332, 'ERROR_UNSUPPORTED_DATAFILE_FORMAT',
+            message='The data file format is not supported by the parser')
+        spec.exit_code(333, 'ERROR_OUTPUT_DATAFILE_PARSE',
+            message='The formatted data output file `{filename}` could not be parsed: {exception}')
 
     def prepare_for_submission(
         self, folder
@@ -102,7 +136,18 @@ class AverageCalculation(CalcJob):
         calcinfo.remote_copy_list = remote_copy_list
         calcinfo.local_copy_list = local_copy_list
 
-        # Retrieve by default the output file
+        # Retrieve by default the output file and the data file
         calcinfo.retrieve_list = [self.inputs.metadata.options.output_filename]
+        calcinfo.retrieve_temporary_list = [self._DEFAULT_OUTPUT_DATA_FILE]
+
+        # Create the input file
+        input_filename = self.inputs.metadata.options.input_filename
+        with folder.open(input_filename, 'w') as infile:
+            infile.write("1\n")
+            infile.write(self._DEFAULT_INPUT_DATA_FILE + "\n")
+            infile.write("1.D0\n")
+            infile.write(f"{self.inputs.npts.value}\n")
+            infile.write(f"{self.inputs.average_axis.value}\n")
+            infile.write(f"{self.inputs.window_size.value / Bohr:.8f}\n")
 
         return calcinfo
