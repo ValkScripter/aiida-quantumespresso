@@ -318,12 +318,15 @@ class ProjwfcParser(BaseParser):
         out_info_dict['spinorbit'] = parsed_xml.get('spin_orbit_calculation')
         out_info_dict['spin'] = out_info_dict['nspin'] == 2
 
+        spin = out_info_dict['spin']
+
 
         out_filenames = self.retrieved.base.repository.list_object_names()
         pdostot_filenames = fnmatch.filter(out_filenames, '*pdos_tot*')
 
         is_kpdos = self.node.inputs.parameters.get_dict().get('PROJWFC', {}).get('kresolveddos', False)
         out_info_dict['kresolveddos'] = is_kpdos
+        index_offset = 1 if is_kpdos else 0
 
         if len(pdostot_filenames)>0:    # when not tdosinboxes
             # check and read pdos_tot file
@@ -334,9 +337,15 @@ class ProjwfcParser(BaseParser):
                     pdostot_array = np.atleast_2d(np.genfromtxt(pdostot_file))
                     if is_kpdos:
                         kpoints = pdostot_array[:, 0]
-                    energy = pdostot_array[:, -3]
-                    dos = pdostot_array[:, -2]
-                    pdos = pdostot_array[:, -1]
+                    energy = pdostot_array[:, index_offset]
+                    if not spin:
+                        dos = pdostot_array[:, index_offset+1]
+                        pdos = pdostot_array[:, index_offset+2]
+                    else:
+                        dos_up = pdostot_array[:, index_offset+1]
+                        dos_down = pdostot_array[:, index_offset+2]
+                        pdos_up = pdostot_array[:, index_offset+3]
+                        pdos_down = pdostot_array[:, index_offset+4]
             except (OSError, KeyError):
                 return self.exit(self.exit_codes.ERROR_READING_PDOSTOT_FILE, logs)
 
@@ -361,10 +370,36 @@ class ProjwfcParser(BaseParser):
             for linkname, node in new_nodes_list:
                 self.out(linkname, node)
 
-            Pdos_out = XyData()
-            Pdos_out.set_x(energy, 'Energy', 'eV')
-            Pdos_out.set_y(pdos, 'PDoS', 'states/eV')
-            self.out('Pdos', Pdos_out)
+            if not spin:
+                Dos_out = XyData()
+                Dos_out.set_x(energy, 'Energy', 'eV')
+                Dos_out.set_y(dos, 'DOS', 'states/eV')
+                self.out('Dos', Dos_out)
+
+                Pdos_out = XyData()
+                Pdos_out.set_x(energy, 'Energy', 'eV')
+                Pdos_out.set_y(pdos, 'PDOS', 'states/eV')
+                self.out('Pdos', Pdos_out)
+            else:
+                Dos_up_out = XyData()
+                Dos_up_out.set_x(energy, 'Energy', 'eV')
+                Dos_up_out.set_y(dos_up, 'DOS up', 'states/eV')
+                self.out('Dos_up', Dos_up_out)
+
+                Dos_down_out = XyData()
+                Dos_down_out.set_x(energy, 'Energy', 'eV')
+                Dos_down_out.set_y(dos_down, 'DOS down', 'states/eV')
+                self.out('Dos_down', Dos_down_out)
+
+                Pdos_up_out = XyData()
+                Pdos_up_out.set_x(energy, 'Energy', 'eV')
+                Pdos_up_out.set_y(pdos_up, 'PDOS up', 'states/eV')
+                self.out('Pdos_up', Pdos_up_out)
+
+                Pdos_down_out = XyData()
+                Pdos_down_out.set_x(energy, 'Energy', 'eV')
+                Pdos_down_out.set_y(pdos_down, 'PDOS down', 'states/eV')
+                self.out('Pdos_down', Pdos_down_out)
 
         else:       # when tdosinboxes
             # check and read ldos_boxes file
@@ -392,10 +427,10 @@ class ProjwfcParser(BaseParser):
             Ldos_out.set_y(ys, labels, units)
             self.out('Ldos', Ldos_out)
 
-        Dos_out = XyData()
-        Dos_out.set_x(energy, 'Energy', 'eV')
-        Dos_out.set_y(dos, 'DoS', 'states/eV')
-        self.out('Dos', Dos_out)
+            Dos_out = XyData()
+            Dos_out.set_x(energy, 'Energy', 'eV')
+            Dos_out.set_y(dos, 'DoS', 'states/eV')
+            self.out('Dos', Dos_out)
 
         return self.exit(logs=logs)
 

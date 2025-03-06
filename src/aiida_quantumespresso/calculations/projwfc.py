@@ -56,6 +56,10 @@ class ProjwfcCalculation(NamelistsCalculation):
         spec.output('Pdos', valid_type=XyData, required=False, help='Total Projected DoS')
         spec.output('kpoints_mesh', valid_type=ArrayData, required=False, help='K-points mesh when kresolveddos')
         ## if spin
+        spec.output('Dos_up', valid_type=XyData, required=False, help='Total DoS for spin up')
+        spec.output('Dos_down', valid_type=XyData, required=False, help='Total DoS for spin down')
+        spec.output('Pdos_up', valid_type=XyData, required=False, help='Total Projected DoS for spin up')
+        spec.output('Pdos_down', valid_type=XyData, required=False, help='Total Projected DoS for spin down')
         spec.output('projections_up', valid_type=ProjectionData, required=False)
         spec.output('projections_down', valid_type=ProjectionData, required=False)
         spec.output('bands_up', valid_type=BandsData, required=False)
