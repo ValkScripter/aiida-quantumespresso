@@ -197,6 +197,8 @@ def spin_dependent_subparser(out_info_dict):
 
     #insert here some logic to assign pdos to the orbitals
     pdos_arrays = spin_dependent_pdos_subparser(out_info_dict)
+    if len(pdos_arrays) != len(orbitals):
+        raise QEOutputParsingError(f'The number of orbitals {len(orbitals)} does not match the number of pdos arrays {len(pdos_arrays)} (spin={od["spin"]}, spin_down={spin_down})')
     energy_arrays = [out_info_dict['energy']] * len(orbitals)
     projection_data.set_projectiondata(
         orbitals,
@@ -320,7 +322,8 @@ class ProjwfcParser(BaseParser):
         out_filenames = self.retrieved.base.repository.list_object_names()
         pdostot_filenames = fnmatch.filter(out_filenames, '*pdos_tot*')
 
-        is_kpdos = False
+        is_kpdos = self.node.inputs.parameters.get_dict().get('PROJWFC', {}).get('kresolveddos', False)
+        out_info_dict['kresolveddos'] = is_kpdos
 
         if len(pdostot_filenames)>0:    # when not tdosinboxes
             # check and read pdos_tot file
@@ -329,8 +332,6 @@ class ProjwfcParser(BaseParser):
                 with self.retrieved.base.repository.open(pdostot_filename, 'r') as pdostot_file:
                     # Columns: Energy(eV), Dos(E), Pdos(E)
                     pdostot_array = np.atleast_2d(np.genfromtxt(pdostot_file))
-                    is_kpdos = pdostot_array.shape[1]>3
-                    out_info_dict['kresolveddos'] = is_kpdos
                     if is_kpdos:
                         kpoints = pdostot_array[:, 0]
                     energy = pdostot_array[:, -3]
