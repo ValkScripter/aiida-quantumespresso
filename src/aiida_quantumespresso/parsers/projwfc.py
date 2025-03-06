@@ -346,6 +346,8 @@ class ProjwfcParser(BaseParser):
                         dos_down = pdostot_array[:, index_offset+2]
                         pdos_up = pdostot_array[:, index_offset+3]
                         pdos_down = pdostot_array[:, index_offset+4]
+                        dos = dos_up + dos_down
+                        pdos = pdos_up + pdos_down
             except (OSError, KeyError):
                 return self.exit(self.exit_codes.ERROR_READING_PDOSTOT_FILE, logs)
 
@@ -370,17 +372,17 @@ class ProjwfcParser(BaseParser):
             for linkname, node in new_nodes_list:
                 self.out(linkname, node)
 
-            if not spin:
-                Dos_out = XyData()
-                Dos_out.set_x(energy, 'Energy', 'eV')
-                Dos_out.set_y(dos, 'DOS', 'states/eV')
-                self.out('Dos', Dos_out)
+            Dos_out = XyData()
+            Dos_out.set_x(energy, 'Energy', 'eV')
+            Dos_out.set_y(dos, 'DOS', 'states/eV')
+            self.out('Dos', Dos_out)
 
-                Pdos_out = XyData()
-                Pdos_out.set_x(energy, 'Energy', 'eV')
-                Pdos_out.set_y(pdos, 'PDOS', 'states/eV')
-                self.out('Pdos', Pdos_out)
-            else:
+            Pdos_out = XyData()
+            Pdos_out.set_x(energy, 'Energy', 'eV')
+            Pdos_out.set_y(pdos, 'PDOS', 'states/eV')
+            self.out('Pdos', Pdos_out)
+
+            if spin:
                 Dos_up_out = XyData()
                 Dos_up_out.set_x(energy, 'Energy', 'eV')
                 Dos_up_out.set_y(dos_up, 'DOS up', 'states/eV')
