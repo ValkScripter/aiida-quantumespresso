@@ -213,6 +213,21 @@ class PhCalculation(CalcJob):
                 for points in list_of_points:
                     postpend_text += '{0:18.10f} {1:18.10f} {2:18.10f}\n'.format(*points)  # pylint: disable=consider-using-f-string
 
+        atoms_todo : list = settings.pop("ATOMS_TODO", [])   # List of atoms indices treated by phonon calc (parameters['INPUTPH']['nat_todo'] must be set)
+        if len(atoms_todo) > 0:
+            try:
+                assert 'nat_todo' in parameters['INPUTPH'] and parameters['INPUTPH']['nat_todo'] > 0
+            except:
+                raise exceptions.InputValidationError("Input 'nat_todo' must be set and greater than 0")
+            nat_todo = parameters['INPUTPH']['nat_todo']
+            if len(atoms_todo) != nat_todo:
+                raise exceptions.InputValidationError("Length of 'atoms_todo' must be 'nat_todo'")
+
+            if postpend_text is None:
+                postpend_text = ""
+            postpend_text += "\n"+ " ".join(map(str, atoms_todo)) + "\n"
+
+
         # customized namelists, otherwise not present in the distributed ph code
         try:
             namelists_toprint = settings.pop('NAMELISTS')
