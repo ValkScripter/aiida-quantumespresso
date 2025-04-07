@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Sub class of `Data` to handle interatomic force constants produced by the Quantum ESPRESSO q2r.x code."""
+"""Subclass of `Data` to handle interatomic force constants produced by the Quantum ESPRESSO q2r.x code."""
 from aiida.orm import SinglefileData
 import numpy
 from qe_tools import CONSTANTS
@@ -146,13 +146,14 @@ def parse_q2r_force_constants_file(lines, also_force_constants=False):
         current_line += 1
 
         # read cell data
-        cell = tuple(
-            tuple(float(c) * celldm[0] * CONSTANTS.bohr_to_ang
-                  for c in l.split())
-            for l in lines[current_line:current_line + 3]
-        )
-        parsed_data['cell'] = cell
-        current_line += 3
+        if ibrav == 0:
+            cell = tuple(
+                tuple(float(c) * celldm[0] * CONSTANTS.bohr_to_ang
+                      for c in l.split())
+                for l in lines[current_line:current_line + 3]
+            )
+            parsed_data['cell'] = cell
+            current_line += 3
 
         # read atom types and masses
         atom_type_list = []
