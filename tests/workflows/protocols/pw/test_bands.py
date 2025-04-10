@@ -10,13 +10,13 @@ from aiida_quantumespresso.workflows.pw.bands import PwBandsWorkChain
 def test_get_available_protocols():
     """Test ``PwBandsWorkChain.get_available_protocols``."""
     protocols = PwBandsWorkChain.get_available_protocols()
-    assert sorted(protocols.keys()) == ['fast', 'moderate', 'precise']
+    assert sorted(protocols.keys()) == ['balanced', 'fast', 'stringent']
     assert all('description' in protocol for protocol in protocols.values())
 
 
 def test_get_default_protocol():
     """Test ``PwBandsWorkChain.get_default_protocol``."""
-    assert PwBandsWorkChain.get_default_protocol() == 'moderate'
+    assert PwBandsWorkChain.get_default_protocol() == 'balanced'
 
 
 def test_default(fixture_code, generate_structure, data_regression, serialize_builder):
@@ -72,6 +72,18 @@ def test_relax_type(fixture_code, generate_structure):
     builder = PwBandsWorkChain.get_builder_from_protocol(code, structure, relax_type=RelaxType.NONE)
     assert builder.relax['base']['pw']['parameters']['CONTROL']['calculation'] == 'scf'
     assert 'CELL' not in builder.relax['base']['pw']['parameters'].get_dict()
+
+
+def test_bands_kpoints_overrides(fixture_code, generate_structure, generate_kpoints_mesh):
+    """Test specifying bands kpoints ``overrides`` for the ``get_builder_from_protocol()`` method."""
+    code = fixture_code('quantumespresso.pw')
+    structure = generate_structure('silicon')
+
+    bands_kpoints = generate_kpoints_mesh(3)
+    overrides = {'bands_kpoints': bands_kpoints}
+    builder = PwBandsWorkChain.get_builder_from_protocol(code, structure, overrides=overrides)
+    assert builder.bands_kpoints == bands_kpoints  # pylint: disable=no-member
+    assert 'bands_kpoints_distance' not in builder
 
 
 def test_options(fixture_code, generate_structure):

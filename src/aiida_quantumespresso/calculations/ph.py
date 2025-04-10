@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """Plugin to create a Quantum Espresso ph.x input file."""
 import os
+import warnings
 
 from aiida import orm
 from aiida.common import datastructures, exceptions
+from aiida.common.warnings import AiidaDeprecationWarning
 import numpy
 
 from aiida_quantumespresso.calculations import _lowercase_dict, _uppercase_dict
@@ -72,6 +74,12 @@ class PhCalculation(CalcJob):
             message='The stdout output file was incomplete probably because the calculation got interrupted.')
         spec.exit_code(350, 'ERROR_UNEXPECTED_PARSER_EXCEPTION',
             message='The parser raised an unexpected exception: {exception}')
+        spec.exit_code(360, 'ERROR_INCOMPATIBLE_FFT_GRID',
+            message='The FFT grid is incompatible with the detected symmetries. Try using the lattice-specific '
+                    '`ibrav` != 0 in the parent `pw.x` calculation.')
+        spec.exit_code(361, 'ERROR_WRONG_REPRESENTATION',
+            message=('The representation found seems to be wrong according to the detected symmetries. '
+                     'Try using the lattice-specific `ibrav` != 0 in the parent `pw.x` calculation.'))
 
         # Significant errors but calculation can be used to restart
         spec.exit_code(400, 'ERROR_OUT_OF_WALLTIME',
@@ -99,6 +107,12 @@ class PhCalculation(CalcJob):
 
         if 'settings' in self.inputs:
             settings = _uppercase_dict(self.inputs.settings.get_dict(), dict_name='settings')
+            if 'ADDITIONAL_RETRIEVE_LIST' in settings:
+                warnings.warn(
+                    'The key `ADDITIONAL_RETRIEVE_LIST` in the settings input is deprecated and will be removed in '
+                    'the future. Use the `CalcJob.metadata.options.additional_retrieve_list` input instead.',
+                    AiidaDeprecationWarning
+                )
         else:
             settings = {}
 
