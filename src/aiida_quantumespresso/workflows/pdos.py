@@ -451,6 +451,9 @@ class PdosWorkChain(ProtocolMixin, WorkChain):
 
         if 'scf' in self.inputs:
             inputs.pw.parent_folder = self.ctx.scf_parent_folder
+        else:
+            # to get the SCF workchain from the remote given in input when no SCF is to be run
+            self.ctx.workchain_scf = inputs.pw.parent_folder.creator.caller
 
         if 'nbands_factor' in self.inputs:
             inputs.pw.parameters = inputs.pw.parameters.get_dict()
