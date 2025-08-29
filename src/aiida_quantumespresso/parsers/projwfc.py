@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 from aiida.common.extendeddicts import AttributeDict
 from aiida.engine import ExitCode
-from aiida.orm import BandsData, Dict, KpointsData, ProjectionData, StructureData, XyData
+from aiida.orm import BandsData, Dict, KpointsData, ProjectionData, StructureData, XyData, ArrayData
 from aiida.plugins import DataFactory, OrbitalFactory
 from aiida.tools.data.orbital.orbital import Orbital
 import numpy as np
@@ -20,6 +20,264 @@ from aiida_quantumespresso.parsers.parse_raw.base import (
 from aiida_quantumespresso.utils.mapping import get_logging_container
 
 from .base import BaseParser
+
+
+def find_orbitals_from_statelines(out_info_dict):
+    """This function reads in all the state_lines, that is, the lines describing which atomic states, taken from the
+    pseudopotential, are used for the projection. Then it converts these state_lines into a set of orbitals.
+
+    :param out_info_dict: contains various technical internals useful in parsing
+    :return: orbitals, a list of orbitals suitable for setting ProjectionData
+    """
+
+    # Format of statelines
+    # From PP/src/projwfc.f90: (since Oct. 8 2019)
+    #
+    # 1000 FORMAT (5x,"state #",i4,": atom ",i3," (",a3,"), wfc ",i2," (l=",i1)
+    # IF (lspinorb) THEN
+    # 1001 FORMAT (" j=",f3.1," m_j=",f4.1,")")
+    # ELSE IF (noncolin) THEN
+    # 1002 FORMAT (" m=",i2," s_z=",f4.1,")")
+    # ELSE
+    # 1003 FORMAT (" m=",i2,")")
+    # ENDIF
+    #
+    # Before:
+    # IF (lspinorb) THEN
+    # ...
+    # 1000    FORMAT (5x,"state #",i4,": atom ",i3," (",a3,"), wfc ",i2, &
+    #               " (j=",f3.1," l=",i1," m_j=",f4.1,")")
+    # ELSE
+    # ...
+    # 1500    FORMAT (5x,"state #",i4,": atom ",i3," (",a3,"), wfc ",i2, &
+    #               " (l=",i1," m=",i2," s_z=",f4.1,")")
+    # ENDIF
+
+    out_file = out_info_dict['out_file']
+    atomnum_re = re.compile(r'atom\s*([0-9]+?)[^0-9]')
+    element_re = re.compile(r'atom\s*[0-9]+\s*\(\s*([A-Za-z0-9-_]+?)\s*\)')
+    if out_info_dict['spinorbit']:
+        # spinorbit
+        lnum_re = re.compile(r'l=\s*([0-9]+?)[^0-9]')
+        jnum_re = re.compile(r'j=\s*([0-9.]+?)[^0-9.]')
+        mjnum_re = re.compile(r'm_j=\s*([-0-9.]+?)[^-0-9.]')
+    elif not out_info_dict['collinear']:
+        # non-collinear
+        lnum_re = re.compile(r'l=\s*([0-9]+?)[^0-9]')
+        mnum_re = re.compile(r'm=\s*([-0-9]+?)[^-0-9]')
+        sznum_re = re.compile(r's_z=\s*([-0-9.]*?)[^-0-9.]')
+    else:
+        # collinear / no spin
+        lnum_re = re.compile(r'l=\s*([0-9]+?)[^0-9]')
+        mnum_re = re.compile(r'm=\s*([-0-9]+?)[^-0-9]')
+    wfc_lines = out_info_dict['wfc_lines']
+    state_lines = [out_file[wfc_line] for wfc_line in wfc_lines]
+    state_dicts = []
+    for state_line in state_lines:
+        try:
+            state_dict = {}
+            state_dict['atomnum'] = int(atomnum_re.findall(state_line)[0])
+            state_dict['atomnum'] -= 1  # to keep with orbital indexing
+            state_dict['kind_name'] = element_re.findall(state_line)[0].strip()
+            state_dict['angular_momentum'] = int(lnum_re.findall(state_line)[0])
+            if out_info_dict['spinorbit']:
+                state_dict['total_angular_momentum'] = float(jnum_re.findall(state_line)[0])
+                state_dict['magnetic_number'] = float(mjnum_re.findall(state_line)[0])
+            else:
+                if not out_info_dict['collinear']:
+                    state_dict['spin'] = float(sznum_re.findall(state_line)[0])
+                state_dict['magnetic_number'] = int(mnum_re.findall(state_line)[0])
+                state_dict['magnetic_number'] -= 1  # to keep with orbital indexing
+        except ValueError:
+            raise QEOutputParsingError('State lines are not formatted in a standard way.')
+        state_dicts.append(state_dict)
+
+    # here is some logic to figure out the value of radial_nodes to use
+    new_state_dicts = []
+    for i in range(len(state_dicts)):
+        radial_nodes = 0
+        state_dict = state_dicts[i].copy()
+        for j in range(i - 1, -1, -1):
+            if state_dict == state_dicts[j]:
+                radial_nodes += 1
+        state_dict['radial_nodes'] = radial_nodes
+        new_state_dicts.append(state_dict)
+    state_dicts = new_state_dicts
+
+    # here is some logic to assign positions based on the atom_index
+    structure = out_info_dict['structure']
+    for state_dict in state_dicts:
+        site_index = state_dict.pop('atomnum')
+        state_dict['position'] = structure.sites[site_index].position
+
+    # here we set the resulting state_dicts to a new set of orbitals
+    orbitals = []
+    if out_info_dict['spinorbit']:
+        OrbitalCls = OrbitalFactory('spinorbithydrogen')
+    elif not out_info_dict['collinear']:
+        OrbitalCls = OrbitalFactory('noncollinearhydrogen')
+    else:
+        OrbitalCls = OrbitalFactory('core.realhydrogen')
+    for state_dict in state_dicts:
+        orbitals.append(OrbitalCls(**state_dict))
+
+    return orbitals
+
+
+def spin_dependent_subparser(out_info_dict):
+    """This find the projection and bands arrays from the out_file and out_info_dict. Used to handle the different
+    possible spin-cases in a convenient manner.
+
+    :param out_info_dict: contains various technical internals useful in parsing
+    :return: ProjectionData, BandsData parsed from out_file
+    """
+    out_file = out_info_dict['out_file']
+    spin_down = out_info_dict['spin_down']
+    od = out_info_dict  # using a shorter name for convenience
+    #   regular expressions needed for later parsing
+    WaveFraction1_re = re.compile(r'\=(.*?)\*')  # state composition 1
+    WaveFractionremain_re = re.compile(r'\+(.*?)\*')  # state comp 2
+    FunctionId_re = re.compile(r'\#(.*?)\]')  # state identity
+    # primes arrays for the later parsing
+    num_wfc = len(od['wfc_lines'])
+    bands = np.zeros([od['k_states'], od['num_bands']])
+    projection_arrays = np.zeros([od['k_states'], od['num_bands'], num_wfc])
+
+    try:
+        for i in range(od['k_states']):
+            if spin_down:
+                i += od['k_states']
+            # grabs band energy
+            for j in range(i * od['num_bands'], (i + 1) * od['num_bands'], 1):
+                out_ind = od['e_lines'][j]
+                try:
+                    # post ~6.3 <6.5 output format "e ="
+                    val = out_file[out_ind].split()[2]
+                    float(val)
+                except ValueError:
+                    # pre ~6.3 and 6.5+ output format "==== e("
+                    val = out_file[out_ind].split(' = ')[1].split()[0]
+                bands[i % od['k_states']][j % od['num_bands']] = val
+                #subloop grabs pdos
+                wave_fraction = []
+                wave_id = []
+                for k in range(od['e_lines'][j] + 1, od['psi_lines'][j], 1):
+                    out_line = out_file[k]
+                    wave_fraction += WaveFraction1_re.findall(out_line)
+                    wave_fraction += WaveFractionremain_re.findall(out_line)
+                    wave_id += FunctionId_re.findall(out_line)
+                if len(wave_id) != len(wave_fraction):
+                    raise IndexError
+                for l in range(len(wave_id)):
+                    wave_id[l] = int(wave_id[l])
+                    wave_fraction[l] = float(wave_fraction[l])
+                    #sets relevant values in pdos_array
+                    projection_arrays[i % od['k_states']][j % od['num_bands']][wave_id[l] - 1] = wave_fraction[l]
+    except IndexError:
+        raise QEOutputParsingError('the standard out file does not comply with the official documentation.')
+
+    bands_data = BandsData()
+    kpoints = od['kpoints']
+    try:
+        if len(od['k_vect']) != len(kpoints.get_kpoints()):
+            raise AttributeError
+        bands_data.set_kpointsdata(kpoints)
+    except AttributeError:
+        bands_data.set_kpoints(od['k_vect'].astype(float))
+
+    bands_data.set_bands(bands, units='eV')
+
+    orbitals = out_info_dict['orbitals']
+    if len(orbitals) != np.shape(projection_arrays[0, 0, :])[0]:
+        raise QEOutputParsingError(
+            'There was an internal parsing error, '
+            ' the projection array shape does not agree'
+            ' with the number of orbitals'
+        )
+    projection_data = ProjectionData()
+    projection_data.set_reference_bandsdata(bands_data)
+    projections = [projection_arrays[:, :, i] for i in range(len(orbitals))]
+
+    # Do the bands_check manually here
+    for projection in projections:
+        if np.shape(projection) != np.shape(bands):
+            raise AttributeError('Projections not the same shape as the bands')
+
+    #insert here some logic to assign pdos to the orbitals
+    pdos_arrays = spin_dependent_pdos_subparser(out_info_dict)
+    if len(pdos_arrays) != len(orbitals):
+        raise QEOutputParsingError(f'The number of orbitals {len(orbitals)} does not match the number of pdos arrays {len(pdos_arrays)} (spin={od["spin"]}, spin_down={spin_down})')
+    energy_arrays = [out_info_dict['energy']] * len(orbitals)
+    projection_data.set_projectiondata(
+        orbitals,
+        list_of_projections=projections,
+        list_of_energy=energy_arrays,
+        list_of_pdos=pdos_arrays,
+        bands_check=False
+    )
+    # pdos=pdos_arrays
+    return bands_data, projection_data
+
+
+def natural_sort_key(sort_key, _nsre=re.compile('([0-9]+)')):
+    """Pass to ``key`` for ``str.sort`` to achieve natural sorting. For example, ``["2", "11", "1"]`` will be sorted to
+    ``["1", "2", "11"]`` instead of ``["1", "11", "2"]``
+
+    :param sort_key: Original key to be processed
+    :return: A list of string and integers.
+    """
+    keys = []
+    for text in _nsre.split(sort_key):
+        if text.isdigit():
+            keys.append(int(text))
+        else:
+            keys.append(text)
+    return keys
+
+
+def spin_dependent_pdos_subparser(out_info_dict):
+    """Finds and labels the pdos arrays associated with the out_info_dict.
+
+    :param out_info_dict: contains various technical internals useful in parsing
+    :return: (pdos_name, pdos_array) tuples for all the specific pdos
+    """
+    spin = out_info_dict['spin']
+    collinear = out_info_dict.get('collinear', True)
+    spinorbit = out_info_dict.get('spinorbit', False)
+    spin_down = out_info_dict['spin_down']
+    pdos_atm_array_dict = out_info_dict['pdos_atm_array_dict']
+    kresolveddos = out_info_dict.get('kresolveddos', False)         # Added
+    if spin:
+        mult_factor = 2
+        if spin_down:
+            first_array = 4
+        else:
+            first_array = 3
+    else:
+        mult_factor = 1
+        first_array = 2
+    mf = mult_factor
+    fa = first_array
+    offset = 1 if kresolveddos else 0           # Added
+    pdos_file_names = [k for k in pdos_atm_array_dict]
+    pdos_file_names.sort(key=natural_sort_key)
+    out_arrays = []
+    # we can keep the pdos in synch with the projections by relying on the fact
+    # both are produced in the same order (thus the sorted file_names)
+    for name in pdos_file_names:
+        this_array = pdos_atm_array_dict[name]
+        if not collinear and not spinorbit:
+            # In the non-collinear, non-spinorbit case, the "up"-spin orbitals
+            # come first, followed by all "down" orbitals
+            for i in range(3+offset, np.shape(this_array)[1], 2):           # Modified
+                out_arrays.append(this_array[:, i])
+            for i in range(4+offset, np.shape(this_array)[1], 2):           # Modified
+                out_arrays.append(this_array[:, i])
+        else:
+            for i in range(fa+offset, np.shape(this_array)[1], mf):         # Modified
+                out_arrays.append(this_array[:, i])
+
+    return out_arrays
 
 
 class ProjwfcParser(BaseParser):
@@ -61,27 +319,121 @@ class ProjwfcParser(BaseParser):
         spinorbit = parsed_xml.get('spin_orbit_calculation')
         non_collinear = parsed_xml.get('non_colinear_calculation')
 
-        orbitals = self._parse_orbitals(header, structure, non_collinear, spinorbit)
-        bands, projections = self._parse_bands_and_projections(kpoint_blocks, len(orbitals))
-        energy, dos_node, pdos_array = self._parse_pdos_files(retrieved_temporary_folder, nspin, spinorbit, logs)
+        spin = out_info_dict['spin']
 
-        self.out('Dos', dos_node)
 
-        output_node_dict = self._build_bands_and_projections(
-            kpoints, bands, energy, orbitals, projections, pdos_array, nspin
-        )
-        for linkname, node in output_node_dict.items():
-            self.out(linkname, node)
+        out_filenames = self.retrieved.base.repository.list_object_names()
+        pdostot_filenames = fnmatch.filter(out_filenames, '*pdos_tot*')
 
-        for exit_code in [
-            'ERROR_OUTPUT_STDOUT_MISSING',
-            'ERROR_OUTPUT_STDOUT_READ',
-            'ERROR_OUTPUT_STDOUT_PARSE',
-            'ERROR_OUTPUT_STDOUT_INCOMPLETE',
-            'ERROR_READING_PDOSTOT_FILE'
-        ]:
-            if exit_code in logs.error:
-                return self.exit(self.exit_codes.get(exit_code), logs)
+        is_kpdos = self.node.inputs.parameters.get_dict().get('PROJWFC', {}).get('kresolveddos', False)
+        out_info_dict['kresolveddos'] = is_kpdos
+        index_offset = 1 if is_kpdos else 0
+
+        if len(pdostot_filenames)>0:    # when not tdosinboxes
+            # check and read pdos_tot file
+            try:
+                pdostot_filename = pdostot_filenames[0]
+                with self.retrieved.base.repository.open(pdostot_filename, 'r') as pdostot_file:
+                    # Columns: Energy(eV), Dos(E), Pdos(E)
+                    pdostot_array = np.atleast_2d(np.genfromtxt(pdostot_file))
+                    if is_kpdos:
+                        kpoints = pdostot_array[:, 0]
+                    energy = pdostot_array[:, index_offset]
+                    if not spin:
+                        dos = pdostot_array[:, index_offset+1]
+                        pdos = pdostot_array[:, index_offset+2]
+                    else:
+                        dos_up = pdostot_array[:, index_offset+1]
+                        dos_down = pdostot_array[:, index_offset+2]
+                        pdos_up = pdostot_array[:, index_offset+3]
+                        pdos_down = pdostot_array[:, index_offset+4]
+                        dos = dos_up + dos_down
+                        pdos = pdos_up + pdos_down
+            except (OSError, KeyError):
+                return self.exit(self.exit_codes.ERROR_READING_PDOSTOT_FILE, logs)
+
+            # check and read all of the individual pdos_atm files
+            pdos_atm_filenames = fnmatch.filter(out_filenames, '*pdos_atm*')
+            pdos_atm_array_dict = {}
+            for name in pdos_atm_filenames:
+                with self.retrieved.base.repository.open(name, 'r') as pdosatm_file:
+                    pdos_atm_array_dict[name] = np.atleast_2d(np.genfromtxt(pdosatm_file))
+
+            # finding the bands and projections
+            if is_kpdos:
+                out_info_dict['kpoints'] = kpoints
+                self.out('kpoints_mesh', ArrayData(kpoints))
+            out_info_dict['energy'] = energy
+            out_info_dict['pdos_atm_array_dict'] = pdos_atm_array_dict
+            try:
+                new_nodes_list = self._parse_bands_and_projections(out_info_dict)
+            except QEOutputParsingError as err:
+                self.logger.error(f'Error parsing bands and projections: {err}')
+                return self.exit(self.exit_codes.ERROR_PARSING_PROJECTIONS, logs)
+            for linkname, node in new_nodes_list:
+                self.out(linkname, node)
+
+            Dos_out = XyData()
+            Dos_out.set_x(energy, 'Energy', 'eV')
+            Dos_out.set_y(dos, 'DOS', 'states/eV')
+            self.out('Dos', Dos_out)
+
+            Pdos_out = XyData()
+            Pdos_out.set_x(energy, 'Energy', 'eV')
+            Pdos_out.set_y(pdos, 'PDOS', 'states/eV')
+            self.out('Pdos', Pdos_out)
+
+            if spin:
+                Dos_up_out = XyData()
+                Dos_up_out.set_x(energy, 'Energy', 'eV')
+                Dos_up_out.set_y(dos_up, 'DOS up', 'states/eV')
+                self.out('Dos_up', Dos_up_out)
+
+                Dos_down_out = XyData()
+                Dos_down_out.set_x(energy, 'Energy', 'eV')
+                Dos_down_out.set_y(dos_down, 'DOS down', 'states/eV')
+                self.out('Dos_down', Dos_down_out)
+
+                Pdos_up_out = XyData()
+                Pdos_up_out.set_x(energy, 'Energy', 'eV')
+                Pdos_up_out.set_y(pdos_up, 'PDOS up', 'states/eV')
+                self.out('Pdos_up', Pdos_up_out)
+
+                Pdos_down_out = XyData()
+                Pdos_down_out.set_x(energy, 'Energy', 'eV')
+                Pdos_down_out.set_y(pdos_down, 'PDOS down', 'states/eV')
+                self.out('Pdos_down', Pdos_down_out)
+
+        else:       # when tdosinboxes
+            # check and read ldos_boxes file
+            try:
+                ldos_boxes_filename = fnmatch.filter(out_filenames, '*ldos_boxes*')[0]
+                with self.retrieved.base.repository.open(ldos_boxes_filename, 'r') as ldos_boxes_file:
+                    # Columns: E (eV)  tot(E)     totldos    #  1 (E)   #  2 (E)  ...   #  {n_proj_boxes} (E)
+                    ldos_boxes_array = np.atleast_2d(np.genfromtxt(ldos_boxes_file))
+                    n_boxes = ldos_boxes_array.shape[1]-3
+                    energy = ldos_boxes_array[:, 0]
+                    dos = ldos_boxes_array[:, 1]
+                    ldos = ldos_boxes_array[:, 3:]
+            except (OSError, KeyError):
+                return self.exit(self.exit_codes.ERROR_READING_LDOSBOXES_FILE, logs)
+
+            Ldos_out = XyData()
+            Ldos_out.set_x(energy, 'Energy', 'eV')
+            ys = []
+            labels = []
+            units = []
+            for i in range(n_boxes):
+                ys.append(ldos[:,i])
+                labels.append(f'LDoS box {i+1}')
+                units.append('states/eV')
+            Ldos_out.set_y(ys, labels, units)
+            self.out('Ldos', Ldos_out)
+
+            Dos_out = XyData()
+            Dos_out.set_x(energy, 'Energy', 'eV')
+            Dos_out.set_y(dos, 'DoS', 'states/eV')
+            self.out('Dos', Dos_out)
 
         return self.exit(logs=logs)
 
