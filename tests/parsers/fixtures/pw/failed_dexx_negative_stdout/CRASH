@@ -1,1 +1,4 @@
-../failed_dexx_negative/CRASH
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     Error in routine electrons (1):
+     dexx is negative!  Check that exxdiv_treatment is appropriate for the system, or ecutfock may be too low
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
