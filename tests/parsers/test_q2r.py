@@ -22,3 +22,24 @@ def test_q2r_default(fixture_localhost, generate_calc_job_node, generate_parser,
     assert not orm.Log.collection.get_logs_for(node)
     assert 'force_constants' in results
     data_regression.check(results['force_constants'].get_content())
+
+
+def test_q2r_ibrav(
+    fixture_localhost,
+    generate_calc_job_node,
+    generate_parser,
+    data_regression,
+):
+    """Test a `q2r.x` calculation with non-zero ibrav."""
+    entry_point_calc_job = 'quantumespresso.q2r'
+    entry_point_parser = 'quantumespresso.q2r'
+
+    node = generate_calc_job_node(entry_point_calc_job, fixture_localhost, 'ibrav', generate_inputs())
+    parser = generate_parser(entry_point_parser)
+    results, calcfunction = parser.parse_from_node(node, store_provenance=False)
+
+    assert calcfunction.is_finished, calcfunction.exception
+    assert calcfunction.is_finished_ok, calcfunction.exit_message
+    assert not orm.Log.collection.get_logs_for(node)
+    assert 'force_constants' in results
+    data_regression.check(results['force_constants'].get_content())
