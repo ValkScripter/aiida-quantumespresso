@@ -3,6 +3,7 @@
 import numpy as np
 from aiida.orm import SinglefileData
 from qe_tools import CONSTANTS
+from qe_tools.parsers._input_base import _get_cell_from_parameters
 
 
 class ForceConstantsData(SinglefileData):
@@ -142,13 +143,27 @@ def parse_q2r_force_constants_file(lines, also_force_constants=False):
         parsed_data['number_of_atoms'] = nat
         current_line += 1
 
-        # read cell data
-        cell = tuple(
-            tuple(float(c) * celldm[0] * CONSTANTS.bohr_to_ang for c in line.split())
-            for line in lines[current_line : current_line + 3]
-        )
-        parsed_data['cell'] = cell
-        current_line += 3
+        # read cell data only if ibrav == 0 or else calculate it
+        if ibrav == 0:
+            cell = tuple(
+                tuple(float(c) * celldm[0] * CONSTANTS.bohr_to_ang for c in line.split())
+                for line in lines[current_line : current_line + 3]
+            )
+            parsed_data['cell'] = cell
+            current_line += 3
+        else:
+            system_dict: dict[str, int | float] = {'ibrav': ibrav}
+            for i, v in enumerate(celldm):
+                system_dict[f'celldm({i + 1})'] = v
+            cell_reconstructed = _get_cell_from_parameters(
+                cell_parameters=None,  # this is only used for ibrav=0
+                system_dict=system_dict,
+                alat=celldm[0],
+                using_celldm=True,
+            )
+            cell = cell_reconstructed * CONSTANTS.bohr_to_ang
+            parsed_data['cell'] = tuple(tuple(row) for row in cell)
+            # Don't advance current_line since no lines were read
 
         # read atom types and masses
         atom_type_list = []
